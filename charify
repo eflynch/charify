@@ -65,6 +65,8 @@ def numberify(in_data, chars, size_range, disjoint=False, use_color=False, num_c
 
         chars_added += 1
         consecutive_failures = 0
+    
+    print("gave up after",chars_added,"chars placed")
 
     return output
 
