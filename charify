@@ -28,7 +28,7 @@ def load_char(n, size):
         sys.exit(0)
     return char
 
-def numberify(in_data, chars, size_range, disjoint=False, num_chars=3000, max_fails=1000):
+def numberify(in_data, chars, size_range, disjoint=False, use_color=False, num_chars=3000, max_fails=1000):
     output = np.zeros(in_data.shape, dtype=np.uint8)
     alpha = in_data[:,:,3] > 100
 
@@ -52,18 +52,17 @@ def numberify(in_data, chars, size_range, disjoint=False, num_chars=3000, max_fa
             consecutive_failures += 1
             continue
 
+
         char_mask = (char[:,:,3] > 0)
-        color = in_data[y+char.shape[0]//2, x+char.shape[1]//2,:3]
-        char_map = np.zeros((char_mask.shape[0],char_mask.shape[1],3), dtype=np.uint8)
-        char_map[:,:,0] = char_mask * color[0]
-        char_map[:,:,1] = char_mask * color[1]
-        char_map[:,:,2] = char_mask * color[2]
-
-        output_region[:,:,0:3] += char_map
-
-        output_region[:,:,3] += char[:,:,3]
-
+        if use_color:
+            color = in_data[y+char.shape[0]//2, x+char.shape[1]//2]
+            char_map = np.multiply.outer(char_mask, color)
+        else:
+            char_map = char
+        
+        output_region[char_mask] = char_map[char_mask]
         output_region = np.clip(output_region, 0, 255)
+
         chars_added += 1
         consecutive_failures = 0
 
@@ -78,8 +77,9 @@ if __name__ == "__main__":
     parser.add_option("-c", "--chars", dest="chars", default="0,1,2,3,4,5,6,7,8,9", help="comma-separated list of characters to use")
     parser.add_option("-d", "--disjoint", action="store_true", dest="disjoint", default=False, help="whether should be disjoint or not")
     parser.add_option("-n", "--num_chars", dest="num_chars", default=100, help="number of characters to add")
-    parser.add_option("-m", "--max_fails", dest="max_fails", default=1000, help="number consecutive failed attemps to add a char before quitting")
+    parser.add_option("-m", "--max_fails", dest="max_fails", default=100, help="number consecutive failed attemps to add a char before quitting")
     parser.add_option("-s", "--size_range", dest="size_range", default="10:50", help="colon-separated range for character size")
+    parser.add_option("-u", "--use_color", action="store_true", dest="use_color", default=False, help="color chars with original")
 
     (options, args) = parser.parse_args()
 
@@ -100,7 +100,7 @@ if __name__ == "__main__":
         print("INPUT ERROR: input must be RGBA right now")
         sys.exit(0)
 
-    output = numberify(in_data, chars, size_range, options.disjoint, int(options.num_chars), int(options.max_fails))
+    output = numberify(in_data, chars, size_range, options.disjoint, options.use_color, int(options.num_chars), int(options.max_fails))
 
     output = np.uint8(output)
     out_im = Image.fromarray(output)
