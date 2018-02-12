@@ -9,58 +9,58 @@ im_memo = {}
 im_s_memo = {}
 
 
-def load_char(n, size):
+def load_glyph(n, size, folder):
     if (n, size) in im_s_memo:
         im = im_s_memo[(n, size)]
     else:
         if n in im_memo:
             im = im_memo[n]
         else:
-            im = Image.open("chars/%s" % n)
+            im = Image.open("%s/%s" % (folder, n))
             im_memo[n] = im
         r = size / max(im.size)
         new_sizes = (max(int(r * s), 1) for s in im.size)
         im = im.resize(new_sizes)
         im_s_memo[(n, size)] = im
 
-    char = np.asarray(im, dtype=np.uint8)
-    return char
+    glyph = np.asarray(im, dtype=np.uint8)
+    return glyph
 
 
-def glyphify(in_data, chars, colors, size):
+def glyphify(in_data, glyphs, colors, size, folder):
     bits = [int(item) for sublist in (bin(byte)[2:].rjust(8, '0') for byte in in_data.encode('utf-8')) for item in sublist]
-    bits_per_char = int(np.floor(np.log2(len(chars))))
+    bits_per_glyph = int(np.floor(np.log2(len(glyphs))))
     bits_per_color = int(np.floor(np.log2(len(colors))))
-    num_chars_required = len(bits) / (bits_per_char + bits_per_color)
-    grid_size = int(np.ceil(np.sqrt(num_chars_required)))
+    num_glyphs_required = len(bits) / (bits_per_glyph + bits_per_color)
+    grid_size = int(np.ceil(np.sqrt(num_glyphs_required)))
     output = np.zeros((grid_size*size, grid_size*size, 4), dtype=np.uint8)
     output[:, :, 0] = 0
 
     grid_x = 0
     grid_y = 0
     while bits:
-        char_bits = []
+        glyph_bits = []
         color_bits = []
-        for x in range(bits_per_char):
+        for x in range(bits_per_glyph):
             if (bits):
-                char_bits.append(bits.pop(0))
+                glyph_bits.append(bits.pop(0))
             else:
-                char_bits.append(0)
+                glyph_bits.append(0)
         for x in range(bits_per_color):
             if (bits):
                 color_bits.append(bits.pop(0))
             else:
                 color_bits.append(0)
 
-        char_index = sum(b << i for (i, b) in enumerate(char_bits))
+        glyph_index = sum(b << i for (i, b) in enumerate(glyph_bits))
         color_index = sum(b << i for (i, b) in enumerate(color_bits))
-        char = load_char(chars[char_index], size)
+        glyph = load_glyph(glyphs[glyph_index], size, folder)
         color = colors[color_index]
-        output_region = output[grid_y:grid_y+char.shape[0], grid_x:grid_x+char.shape[1], :]
+        output_region = output[grid_y:grid_y+glyph.shape[0], grid_x:grid_x+glyph.shape[1], :]
         output_region[:, :, 0] = color[0]
         output_region[:, :, 1] = color[1]
         output_region[:, :, 2] = color[2]
-        output_region[:, :, 3] = char[:, :, 1]
+        output_region[:, :, 3] = glyph[:, :, 1]
 
         grid_x += size
         if grid_x >= grid_size * size:
@@ -70,48 +70,56 @@ def glyphify(in_data, chars, colors, size):
     return Image.fromarray(np.uint8(output), "RGBA").convert("RGBA")
 
 
-def deglyphify(in_data, chars, colors, size):
-    img = np.asarray(in_data, dtype=np.uint8)
+def deglyphify(img, glyphs, colors, size, folder):
     grid_size = img.shape[0] / size
-    bits_per_char = int(np.floor(np.log2(len(chars))))
+    bits_per_glyph = int(np.floor(np.log2(len(glyphs))))
     bits_per_color = int(np.floor(np.log2(len(colors))))
 
-    def find_color_index(char_region):
-        visible_pixels = char_region[char_region[:,:,3] > 0]
-        color = tuple(int(c) for c in visible_pixels[0][0:3])
-        color_index = colors.index(color)
-        return color_index
-
-    def find_char_index(char_region):
+    def find_color_index(glyph_region):
+        visible_pixels = glyph_region[glyph_region[:, :, 3] > 0]
+        color = tuple(int(c) for c in np.mean(visible_pixels, axis=0)[0:3])
         lowest_diff = float("inf")
-        best_char = None
-        for c in chars:
-            char = load_char(c, size)
-            diff = np.sum(np.square(char_region[:char.shape[0], :char.shape[1], 3] - char[:, :, 1]))
+        best_color = None
+        for c in colors:
+            diff = np.sum(np.square(np.array(c) - np.array(color)))
             if diff < lowest_diff:
                 lowest_diff = diff
-                best_char = c
-        return chars.index(best_char)
+                best_color = c
+        return colors.index(best_color)
+
+    def find_glyph_index(glyph_region):
+        lowest_diff = float("inf")
+        best_glyph = None
+        for c in glyphs:
+            glyph = load_glyph(c, size, folder)
+            diff = np.sum(np.square(glyph_region[:glyph.shape[0], :glyph.shape[1], 3] - glyph[:, :, 1]))
+            if diff < lowest_diff:
+                lowest_diff = diff
+                best_glyph = c
+        return glyphs.index(best_glyph)
 
     grid_x = 0
     grid_y = 0
     bits = []
     while grid_y < grid_size * size and grid_x < grid_size * size:
-        char_region = img[grid_y:grid_y+size,grid_x:grid_x+size,:]
-        visible_pixels = char_region[char_region[:,:,3] > 0]
+        glyph_region = img[grid_y:grid_y+size, grid_x:grid_x+size, :]
+        visible_pixels = glyph_region[glyph_region[:, :, 3] > 0]
         if not visible_pixels.any():
             break
 
-        char_index = find_char_index(char_region)
-        for i in range(bits_per_char):
-            bits.append(char_index >> i & 0x001)
+        glyph_index = find_glyph_index(glyph_region)
+        for i in range(bits_per_glyph):
+            bits.append(glyph_index >> i & 0x001)
 
-        color_index = find_color_index(char_region)
+        color_index = find_color_index(glyph_region)
         for i in range(bits_per_color):
             bits.append(color_index >> i & 0x001)
 
+        # print("{} : {} | ".format(glyph_index, color_index), end="")
+
         grid_x += size
         if grid_x >= grid_size * size:
+            # print("-------------------------")
             grid_x = 0
             grid_y += size
 
@@ -132,12 +140,24 @@ if __name__ == "__main__":
     parser.add_option("-i", "--input", dest="input")
     parser.add_option("-o", "--output", dest="output")
     parser.add_option("-s", "--size", dest="size", default="10")
+    parser.add_option("-g", "--gylphs", dest="glyphs", default="glyphs")
 
     (options, args) = parser.parse_args()
 
-    chars = [os.path.basename(f) for f in os.listdir("glyphs")]
+    glyphs = [os.path.basename(f) for f in os.listdir(options.glyphs)]
 
-    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 0, 0), (255, 255, 255)]
+    glyph_folder = options.glyphs
+
+    colors = [
+        (0xfb, 0xa2, 0x31),
+        (0xd3, 0x5f, 0x41),
+        (0x51, 0x92, 0xae),
+        (0x5e, 0x3c, 0xbd),
+        (0xac, 0x48, 0x91),
+        (0x44, 0x4d, 0x55),
+        (0x94, 0x9c, 0xa3),
+        (0x03, 0x24, 0x2f),
+    ]
 
     size = int(options.size)
 
@@ -145,17 +165,24 @@ if __name__ == "__main__":
 
     if options.deglyphify:
         input_img = Image.open(input_data)
-        output = deglyphify(input_img, chars, colors, size)
+        input_img = input_img.convert("RGBA")
+        img = np.asarray(input_img, dtype=np.uint8).copy()
+        alpha = img[:, :, 3]
+        bg_color = img[img.shape[0]-1, img.shape[1]-1,:3]
+        if (alpha == 255).all():
+            dist_from_background = np.sqrt(np.square(img[:, :, 0] - bg_color[0]) + np.square(img[:, :, 1] - bg_color[1]) + np.square(img[:, :, 2] - bg_color[2]))
+            dist_from_background = dist_from_background * (255 / np.max(dist_from_background))
+            alpha[dist_from_background < 50] = 0
+
+        output = deglyphify(img, glyphs, colors, size, glyph_folder)
         if options.output:
             with open(options.output, "w") as f:
                 f.write(output)
         else:
             print(output)
-        
     else:
-        output = glyphify(input_data, chars, colors, size)
+        output = glyphify(input_data, glyphs, colors, size, glyph_folder)
         if options.output:
             output.save(options.output, "png")
         else:
             output.show()
-        
